@@ -1,0 +1,21 @@
+The program can be run using make. 
+
+make build
+
+This loads and preprocesses the data, calculates WHO z-scores, creates longitudinal growth features, performs GMM, and reports on it.
+
+make eda
+
+This generates plots examining height and weight by age and sex, as well as 50 randomly selected individual growth trajectories.
+
+make diagnostics
+
+This reports missing values, extreme z-scores, measurement counts, follow-up duration, and other data-quality information.
+
+make logistics
+
+This does the logistic regression and reports the data. 
+
+make clean
+
+This removes the virtual enviorment.

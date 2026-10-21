@@ -1,0 +1,2621 @@
+
+================================================================================
+FILE: .\dataprocessing.py
+================================================================================
+
+from pathlib import Path
+import pandas as pd
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RAW_DATA = PROJECT_ROOT / "database" / "raw"
+
+def load_height_data():
+    path = RAW_DATA / "starr_source_height_data_jittered.txt"
+    return pd.read_csv(path, sep="\t")
+
+def load_weight_data():
+    path = RAW_DATA / "starr_source_weight_data_jittered.txt"
+    return pd.read_csv(path, sep="\t")
+
+def merge_height_weight(height, weight):
+    merged = height.merge(
+        weight,
+        on=["anon_id", "Sex", "AgeBabyDays"],
+        how="inner"
+    )
+    return merged
+
+
+================================================================================
+FILE: .\datasummary.py
+================================================================================
+
+def print_data_summary(height, weight, growth):
+    print("=" * 60)
+    print("INFANT GROWTH DATA - INITIAL DATA CHECK")
+    print("=" * 60)
+
+    print("\n=== RAW DATA ===")
+
+    print("\nHeight:")
+    print(f"  Records:        {len(height):,}")
+    print(f"  Unique children: {height['anon_id'].nunique():,}")
+    print(
+        f"  Age range:      "
+        f"{height['AgeBabyDays'].min()} - "
+        f"{height['AgeBabyDays'].max()} days"
+    )
+
+    print("\nWeight:")
+    print(f"  Records:        {len(weight):,}")
+    print(f"  Unique children: {weight['anon_id'].nunique():,}")
+    print(
+        f"  Age range:      "
+        f"{weight['AgeBabyDays'].min()} - "
+        f"{weight['AgeBabyDays'].max()} days"
+    )
+
+    print("\n=== MERGED DATA ===")
+
+    print(f"  Matched records: {len(growth):,}")
+    print(f"  Unique children: {growth['anon_id'].nunique():,}")
+
+    print(
+        f"  Age range:       "
+        f"{growth['AgeBabyDays'].min()} - "
+        f"{growth['AgeBabyDays'].max()} days"
+    )
+
+    print("\n=== SEX DISTRIBUTION ===")
+
+    print(
+        growth.groupby("Sex")["anon_id"]
+        .nunique()
+        .to_string()
+    )
+
+    print("\n=== MISSING VALUES ===")
+
+    print(growth.isna().sum().to_string())
+
+    print("\n=== DUPLICATE CHECK ===")
+
+    height_duplicates = height.duplicated(
+        subset=["anon_id", "AgeBabyDays"]
+    ).sum()
+
+    weight_duplicates = weight.duplicated(
+        subset=["anon_id", "AgeBabyDays"]
+    ).sum()
+
+    merged_duplicates = growth.duplicated(
+        subset=["anon_id", "AgeBabyDays"]
+    ).sum()
+
+    print(f"  Height duplicate records: {height_duplicates:,}")
+    print(f"  Weight duplicate records: {weight_duplicates:,}")
+    print(
+        f"  Duplicate child-age records after merge: "
+        f"{merged_duplicates:,}"
+    )
+
+    print("\n=== MEASUREMENT RANGES ===")
+
+    print(
+        f"  Height: "
+        f"{growth['Jit_Heightcm'].min():.2f} - "
+        f"{growth['Jit_Heightcm'].max():.2f} cm"
+    )
+
+    print(
+        f"  Weight: "
+        f"{growth['jit_weightkg'].min():.2f} - "
+        f"{growth['jit_weightkg'].max():.2f} kg"
+    )
+
+    measurements_per_child = growth.groupby("anon_id").size()
+
+    print("\n=== MEASUREMENTS PER CHILD ===")
+    print(f"  Minimum: {measurements_per_child.min()}")
+    print(f"  Maximum: {measurements_per_child.max()}")
+    print(f"  Mean:    {measurements_per_child.mean():.2f}")
+    print(f"  Median:  {measurements_per_child.median():.0f}")
+
+    print("\n=== SAMPLE RECORDS ===")
+
+    print(
+        growth[
+            [
+                "anon_id",
+                "Sex",
+                "AgeBabyDays",
+                "Jit_Heightcm",
+                "jit_weightkg"
+            ]
+        ].head(10).to_string(index=False)
+    )
+
+    print("\n=== MEASUREMENTS PER CHILD DISTRIBUTION ===")
+
+    measurement_counts = growth.groupby("anon_id").size()
+
+    print(
+        measurement_counts.value_counts()
+        .sort_index()
+        .to_string()
+    )
+
+    print(
+        "\nChildren with at least 2 measurements:",
+        (measurement_counts >= 2).sum()
+    )
+
+    print(
+        "Children with at least 3 measurements:",
+        (measurement_counts >= 3).sum()
+    )
+
+    print(
+        "Children with at least 5 measurements:",
+        (measurement_counts >= 5).sum()
+    )
+
+    print(
+        "Children with at least 8 measurements:",
+        (measurement_counts >= 8).sum()
+    )
+
+    print("\n=== LONGITUDINAL AGE COVERAGE ===")
+
+    child_age = growth.groupby("anon_id")["AgeBabyDays"].agg(
+        first_age="min",
+        last_age="max"
+    )
+
+    child_age["duration_days"] = (
+        child_age["last_age"] - child_age["first_age"]
+    )
+
+    print(
+        f"  Mean follow-up:   "
+        f"{child_age['duration_days'].mean():.1f} days"
+    )
+
+    print(
+        f"  Median follow-up: "
+        f"{child_age['duration_days'].median():.1f} days"
+    )
+
+    print(
+        f"  Minimum follow-up: "
+        f"{child_age['duration_days'].min():.0f} days"
+    )
+
+    print(
+        f"  Maximum follow-up: "
+        f"{child_age['duration_days'].max():.0f} days"
+    )
+
+    print("\nChildren with measurements spanning at least:")
+
+    for days in [90, 180, 365, 540, 730]:
+        count = (child_age["duration_days"] >= days).sum()
+
+        print(
+            f"  {days:3} days: "
+            f"{count:,} children"
+        )
+
+    print("\n" + "=" * 60)
+
+
+================================================================================
+FILE: .\data_quality.py
+================================================================================
+
+import pandas as pd
+
+
+def add_quality_flags(
+    growth,
+    height_drop_threshold=5.0,
+    weight_change_threshold=5.0
+):
+
+    data = growth.sort_values(
+        ["anon_id", "AgeBabyDays"]
+    ).copy()
+
+    # ---------------------------------------------------------
+    # previous measurement 
+    # ---------------------------------------------------------
+
+    data["previous_height"] = (
+        data.groupby("anon_id")["Jit_Heightcm"]
+        .shift(1)
+    )
+
+    data["previous_weight"] = (
+        data.groupby("anon_id")["jit_weightkg"]
+        .shift(1)
+    )
+
+    # ---------------------------------------------------------
+    # the delta of height and weight
+    # ---------------------------------------------------------
+
+    data["height_change_from_previous"] = (
+        data["Jit_Heightcm"]
+        - data["previous_height"]
+    )
+
+    data["weight_change_from_previous"] = (
+        data["jit_weightkg"]
+        - data["previous_weight"]
+    )
+
+    # ---------------------------------------------------------
+    # marks if the height/weight exceed the change threshhold
+    # ---------------------------------------------------------
+
+    data["height_quality_flag"] = (
+        data["height_change_from_previous"]
+        < -height_drop_threshold
+    )
+
+    data["weight_quality_flag"] = (
+        data["weight_change_from_previous"].abs()
+        > weight_change_threshold
+    )
+
+    # First measurement for each child has no previous value.
+    # It should not be considered an error.
+    data["height_quality_flag"] = (
+        data["height_quality_flag"]
+        .fillna(False)
+    )
+
+    data["weight_quality_flag"] = (
+        data["weight_quality_flag"]
+        .fillna(False)
+    )
+
+    # Combined flag
+    data["quality_flag"] = (
+        data["height_quality_flag"]
+        | data["weight_quality_flag"]
+    )
+
+    return data
+
+
+def find_height_reversals(
+    growth,
+    drop_threshold=5.0
+):
+    """
+    this checks for the height reversing
+    as mentioned in the checkpoint there
+    are 6 examples of this
+    """
+
+    data = growth.sort_values(
+        ["anon_id", "AgeBabyDays"]
+    ).copy()
+
+    data["previous_height"] = (
+        data.groupby("anon_id")["Jit_Heightcm"]
+        .shift(1)
+    )
+
+    data["height_change"] = (
+        data["Jit_Heightcm"]
+        - data["previous_height"]
+    )
+
+    reversals = data[
+        data["height_change"] < -drop_threshold
+    ].copy()
+
+    return reversals
+
+
+================================================================================
+FILE: .\diagnostics.py
+================================================================================
+
+import pandas as pd
+
+
+def print_growth_diagnostics(growth):
+
+    print("\n" + "=" * 60)
+    print("GROWTH DATA DIAGNOSTICS")
+    print("=" * 60)
+
+    # ---------------------------------------------------------
+    # basic data
+    # ---------------------------------------------------------
+
+    print("\n=== DATASET SIZE ===")
+
+    print(f"Observations: {len(growth):,}")
+    print(f"Children: {growth['anon_id'].nunique():,}")
+
+    print(
+        f"Maximum age: "
+        f"{growth['AgeBabyDays'].max() / 30.4375:.2f} months"
+    )
+
+    # ---------------------------------------------------------
+    # sex distribution
+    # ---------------------------------------------------------
+
+    print("\n=== SEX DISTRIBUTION ===")
+
+    print(
+        growth["Sex"]
+        .value_counts(dropna=False)
+    )
+
+    # ---------------------------------------------------------
+    # state missing values
+    # ---------------------------------------------------------
+
+    print("\n=== MISSING VALUES ===")
+
+    print(
+        growth.isna().sum()
+    )
+
+    # ---------------------------------------------------------
+    # check duplicates
+    # ---------------------------------------------------------
+
+    print("\n=== DUPLICATE CHECK ===")
+
+    duplicate_child_age = (
+        growth
+        .duplicated(
+            subset=["anon_id", "AgeBabyDays"]
+        )
+        .sum()
+    )
+
+    print(
+        f"Duplicate child-age records: "
+        f"{duplicate_child_age}"
+    )
+
+    # ---------------------------------------------------------
+    # measurement ranges
+    # ---------------------------------------------------------
+
+    print("\n=== MEASUREMENT RANGES ===")
+
+    print(
+        f"Height: "
+        f"{growth['Jit_Heightcm'].min():.2f} - "
+        f"{growth['Jit_Heightcm'].max():.2f} cm"
+    )
+
+    print(
+        f"Weight: "
+        f"{growth['jit_weightkg'].min():.2f} - "
+        f"{growth['jit_weightkg'].max():.2f} kg"
+    )
+
+
+    measurements_per_child = (
+        growth
+        .groupby("anon_id")
+        .size()
+    )
+
+    print("\n=== MEASUREMENTS PER CHILD ===")
+
+    print(
+        f"Minimum: "
+        f"{measurements_per_child.min()}"
+    )
+
+    print(
+        f"Maximum: "
+        f"{measurements_per_child.max()}"
+    )
+
+    print(
+        f"Mean: "
+        f"{measurements_per_child.mean():.2f}"
+    )
+
+    print(
+        f"Median: "
+        f"{measurements_per_child.median():.0f}"
+    )
+
+    print("\nDistribution:")
+
+    print(
+        measurements_per_child
+        .value_counts()
+        .sort_index()
+    )
+    
+    child_age_ranges = (
+        growth
+        .groupby("anon_id")["AgeBabyDays"]
+        .agg(
+            first_age="min",
+            last_age="max"
+        )
+    )
+
+    child_age_ranges["duration"] = (
+        child_age_ranges["last_age"]
+        - child_age_ranges["first_age"]
+    )
+
+    print("\n=== LONGITUDINAL AGE COVERAGE ===")
+
+    print(
+        f"Mean follow-up: "
+        f"{child_age_ranges['duration'].mean():.1f} days"
+    )
+
+    print(
+        f"Median follow-up: "
+        f"{child_age_ranges['duration'].median():.1f} days"
+    )
+
+    print(
+        f"Minimum follow-up: "
+        f"{child_age_ranges['duration'].min():.0f} days"
+    )
+
+    print(
+        f"Maximum follow-up: "
+        f"{child_age_ranges['duration'].max():.0f} days"
+    )
+
+    for days in [90, 180, 365, 540, 730]:
+
+        count = (
+            child_age_ranges["duration"]
+            >= days
+        ).sum()
+
+        print(
+            f"Children with measurements spanning "
+            f"at least {days} days: {count:,}"
+        )
+
+
+def print_quality_diagnostics(growth):
+
+    print("\n" + "=" * 60)
+    print("DATA QUALITY FLAGS")
+    print("=" * 60)
+
+    if "height_quality_flag" in growth.columns:
+
+        print(
+            "\nHeight flags:",
+            growth["height_quality_flag"].sum()
+        )
+
+    if "weight_quality_flag" in growth.columns:
+
+        print(
+            "Weight flags:",
+            growth["weight_quality_flag"].sum()
+        )
+
+    if "quality_flag" in growth.columns:
+
+        print(
+            "Total flagged observations:",
+            growth["quality_flag"].sum()
+        )
+
+    # ---------------------------------------------------------
+    # flags for height
+    # ---------------------------------------------------------
+
+    if "height_quality_flag" in growth.columns:
+
+        height_flags = growth[
+            growth["height_quality_flag"]
+        ].copy()
+
+        if len(height_flags) > 0:
+
+            columns = [
+                "anon_id",
+                "Sex",
+                "AgeBabyDays",
+                "Jit_Heightcm"
+            ]
+
+            optional = [
+                "previous_height",
+                "height_change_from_previous"
+            ]
+
+            columns += [
+                c for c in optional
+                if c in height_flags.columns
+            ]
+
+            print("\n=== FLAGGED HEIGHT MEASUREMENTS ===")
+
+            print(
+                height_flags[columns]
+                .to_string(index=False)
+            )
+
+    # ---------------------------------------------------------
+    # flags for weight
+    # ---------------------------------------------------------
+
+    if "weight_quality_flag" in growth.columns:
+
+        weight_flags = growth[
+            growth["weight_quality_flag"]
+        ].copy()
+
+        if len(weight_flags) > 0:
+
+            columns = [
+                "anon_id",
+                "Sex",
+                "AgeBabyDays",
+                "jit_weightkg"
+            ]
+
+            optional = [
+                "previous_weight",
+                "weight_change_from_previous"
+            ]
+
+            columns += [
+                c for c in optional
+                if c in weight_flags.columns
+            ]
+
+            print("\n=== FLAGGED WEIGHT MEASUREMENTS ===")
+
+            print(
+                weight_flags[columns]
+                .to_string(index=False)
+            )
+
+
+def print_zscore_diagnostics(growth):
+    """
+    Print WHO z-score diagnostics and extreme observations.
+    """
+
+    print("\n" + "=" * 60)
+    print("WHO Z-SCORE DIAGNOSTICS")
+    print("=" * 60)
+
+    # ---------------------------------------------------------
+    # summaries
+    # ---------------------------------------------------------
+
+    print("\nHeight Z-score summary:")
+
+    print(
+        growth["height_z"]
+        .describe()
+    )
+
+    print("\nWeight Z-score summary:")
+
+    print(
+        growth["weight_z"]
+        .describe()
+    )
+
+    print("\nMissing Z-scores:")
+
+    print(
+        growth[
+            ["height_z", "weight_z"]
+        ]
+        .isna()
+        .sum()
+    )
+
+    # ---------------------------------------------------------
+    # extreme height
+    # ---------------------------------------------------------
+
+    columns = [
+        "anon_id",
+        "Sex",
+        "AgeBabyDays",
+        "Jit_Heightcm",
+        "height_z"
+    ]
+
+    print("\n=== EXTREME HEIGHT Z-SCORES ===")
+
+    print("\nLowest:")
+
+    print(
+        growth[columns]
+        .sort_values("height_z")
+        .head(10)
+        .to_string(index=False)
+    )
+
+    print("\nHighest:")
+
+    print(
+        growth[columns]
+        .sort_values(
+            "height_z",
+            ascending=False
+        )
+        .head(10)
+        .to_string(index=False)
+    )
+
+    # ---------------------------------------------------------
+    # extreme weight
+    # ---------------------------------------------------------
+
+    columns = [
+        "anon_id",
+        "Sex",
+        "AgeBabyDays",
+        "jit_weightkg",
+        "weight_z"
+    ]
+
+    print("\n=== EXTREME WEIGHT Z-SCORES ===")
+
+    print("\nLowest:")
+
+    print(
+        growth[columns]
+        .sort_values("weight_z")
+        .head(10)
+        .to_string(index=False)
+    )
+
+    print("\nHighest:")
+
+    print(
+        growth[columns]
+        .sort_values(
+            "weight_z",
+            ascending=False
+        )
+        .head(10)
+        .to_string(index=False)
+    )
+
+
+def run_all_diagnostics(growth):
+
+    print_growth_diagnostics(growth)
+
+    print_quality_diagnostics(growth)
+
+    print_zscore_diagnostics(growth)
+
+
+================================================================================
+FILE: .\eda.py
+================================================================================
+
+import matplotlib.pyplot as plt
+
+
+def plot_individual_height_trajectories(
+    growth,
+    n_children=50
+):
+    children = (
+        growth["anon_id"]
+        .drop_duplicates()
+        .sample(
+            n=min(
+                n_children,
+                growth["anon_id"].nunique()
+            ),
+            random_state=42
+        )
+    )
+
+    plt.figure(figsize=(10, 6))
+
+    for child in children:
+        data = growth[
+            growth["anon_id"] == child
+        ]
+
+        plt.plot(
+            data["AgeBabyDays"],
+            data["Jit_Heightcm"],
+            alpha=0.4
+        )
+
+    plt.xlabel("Age (days)")
+    plt.ylabel("Height (cm)")
+    plt.title(
+        f"Height Growth Trajectories "
+        f"({len(children)} Random Children)"
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_individual_weight_trajectories(
+    growth,
+    n_children=50
+):
+    children = (
+        growth["anon_id"]
+        .drop_duplicates()
+        .sample(
+            n=min(
+                n_children,
+                growth["anon_id"].nunique()
+            ),
+            random_state=42
+        )
+    )
+
+    plt.figure(figsize=(10, 6))
+
+    for child in children:
+        data = growth[
+            growth["anon_id"] == child
+        ]
+
+        plt.plot(
+            data["AgeBabyDays"],
+            data["jit_weightkg"],
+            alpha=0.4
+        )
+
+    plt.xlabel("Age (days)")
+    plt.ylabel("Weight (kg)")
+    plt.title(
+        f"Weight Growth Trajectories "
+        f"({len(children)} Random Children)"
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_height_by_age(growth):
+    plt.figure(figsize=(10, 6))
+
+    plt.scatter(
+        growth["AgeBabyDays"],
+        growth["Jit_Heightcm"],
+        alpha=0.05,
+        s=5
+    )
+
+    plt.xlabel("Age (days)")
+    plt.ylabel("Height (cm)")
+    plt.title("Height Measurements by Age")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_weight_by_age(growth):
+    plt.figure(figsize=(10, 6))
+
+    plt.scatter(
+        growth["AgeBabyDays"],
+        growth["jit_weightkg"],
+        alpha=0.05,
+        s=5
+    )
+
+    plt.xlabel("Age (days)")
+    plt.ylabel("Weight (kg)")
+    plt.title("Weight Measurements by Age")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_height_by_age_sex(growth):
+    plt.figure(figsize=(10, 6))
+
+    for sex in ["Female", "Male"]:
+        data = growth[
+            growth["Sex"] == sex
+        ]
+
+        plt.scatter(
+            data["AgeBabyDays"],
+            data["Jit_Heightcm"],
+            alpha=0.05,
+            s=5,
+            label=sex
+        )
+
+    plt.xlabel("Age (days)")
+    plt.ylabel("Height (cm)")
+    plt.title("Height Measurements by Age and Sex")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_weight_by_age_sex(growth):
+    plt.figure(figsize=(10, 6))
+
+    for sex in ["Female", "Male"]:
+        data = growth[
+            growth["Sex"] == sex
+        ]
+
+        plt.scatter(
+            data["AgeBabyDays"],
+            data["jit_weightkg"],
+            alpha=0.05,
+            s=5,
+            label=sex
+        )
+
+    plt.xlabel("Age (days)")
+    plt.ylabel("Weight (kg)")
+    plt.title("Weight Measurements by Age and Sex")
+    plt.legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+================================================================================
+FILE: .\features.py
+================================================================================
+
+import pandas as pd
+
+
+def create_growth_features(growth):
+
+    data = growth.copy()
+
+    # =========================================================
+    # remove the previously flagged data
+    # =========================================================
+
+    if "quality_flag" in data.columns:
+
+        data = data[
+            ~data["quality_flag"]
+        ].copy()
+
+    data = data.sort_values(
+        ["anon_id", "AgeBabyDays"]
+    )
+
+    # =========================================================
+    # these are the age windows used in the features in days
+    # =========================================================
+
+    # turn the months into days
+    MONTH_6 = 6 * 30.4375
+    MONTH_12 = 12 * 30.4375
+    MONTH_18 = 18 * 30.4375
+    MONTH_24 = 24 * 30.4375
+
+    features = []
+
+    # =========================================================
+    # features for child
+    # =========================================================
+
+    for child_id, child_data in data.groupby(
+        "anon_id"
+    ):
+
+        # -----------------------------------------------------
+        # two valid measurements needed
+        # -----------------------------------------------------
+
+        if len(child_data) < 2:
+            continue
+
+        child_data = child_data.sort_values(
+            "AgeBabyDays"
+        )
+
+        first = child_data.iloc[0]
+        last = child_data.iloc[-1]
+
+        duration = (
+            last["AgeBabyDays"]
+            - first["AgeBabyDays"]
+        )
+
+        if duration <= 0:
+            continue
+
+        # =====================================================
+        # START / END Z-SCORE
+        # =====================================================
+
+        height_z_change = (
+            last["height_z"]
+            - first["height_z"]
+        )
+
+        height_z_rate = (
+            height_z_change / duration
+        )
+
+        weight_z_change = (
+            last["weight_z"]
+            - first["weight_z"]
+        )
+
+        weight_z_rate = (
+            weight_z_change / duration
+        )
+
+        # =====================================================
+        # AGE-WINDOW FEATURES
+        # =====================================================
+
+        # -----------------------------------------------------
+        # 0–6 MONTHS
+        # -----------------------------------------------------
+
+        window_0_6 = child_data[
+            child_data["AgeBabyDays"] < MONTH_6
+        ]
+
+        # -----------------------------------------------------
+        # 6–12 MONTHS
+        # -----------------------------------------------------
+
+        window_6_12 = child_data[
+            (child_data["AgeBabyDays"] >= MONTH_6)
+            &
+            (child_data["AgeBabyDays"] < MONTH_12)
+        ]
+
+        # -----------------------------------------------------
+        # 12–18 MONTHS
+        # -----------------------------------------------------
+
+        window_12_18 = child_data[
+            (child_data["AgeBabyDays"] >= MONTH_12)
+            &
+            (child_data["AgeBabyDays"] < MONTH_18)
+        ]
+
+        # -----------------------------------------------------
+        # 18–24 MONTHS
+        # -----------------------------------------------------
+
+        window_18_24 = child_data[
+            (child_data["AgeBabyDays"] >= MONTH_18)
+            &
+            (child_data["AgeBabyDays"] <= MONTH_24)
+        ]
+
+
+        def mean_or_nan(
+            dataframe,
+            column
+        ):
+
+            if len(dataframe) == 0:
+                return float("nan")
+
+            return dataframe[column].mean()
+
+        # =====================================================
+        # MEAN
+        # =====================================================
+
+        height_0_6 = mean_or_nan(
+            window_0_6,
+            "height_z"
+        )
+
+        height_6_12 = mean_or_nan(
+            window_6_12,
+            "height_z"
+        )
+
+        height_12_18 = mean_or_nan(
+            window_12_18,
+            "height_z"
+        )
+
+        height_18_24 = mean_or_nan(
+            window_18_24,
+            "height_z"
+        )
+
+        weight_0_6 = mean_or_nan(
+            window_0_6,
+            "weight_z"
+        )
+
+        weight_6_12 = mean_or_nan(
+            window_6_12,
+            "weight_z"
+        )
+
+        weight_12_18 = mean_or_nan(
+            window_12_18,
+            "weight_z"
+        )
+
+        weight_18_24 = mean_or_nan(
+            window_18_24,
+            "weight_z"
+        )
+
+        features.append({
+
+            # -------------------------------------------------
+            # IDENTIFICATION
+            # -------------------------------------------------
+
+            "anon_id": child_id,
+
+            "Sex": first["Sex"],
+
+            # -------------------------------------------------
+            # AGE / FOLLOW-UP
+            # -------------------------------------------------
+
+            "start_age": first["AgeBabyDays"],
+
+            "end_age": last["AgeBabyDays"],
+
+            "duration_days": duration,
+
+            "num_measurements": len(
+                child_data
+            ),
+
+            # -------------------------------------------------
+            # OVERALL HEIGHT TRAJECTORY
+            # -------------------------------------------------
+
+            "start_height_z": first["height_z"],
+
+            "end_height_z": last["height_z"],
+
+            "height_z_change": height_z_change,
+
+            "height_z_rate": height_z_rate,
+
+            # -------------------------------------------------
+            # OVERALL WEIGHT TRAJECTORY
+            # -------------------------------------------------
+
+            "start_weight_z": first["weight_z"],
+
+            "end_weight_z": last["weight_z"],
+
+            "weight_z_change": weight_z_change,
+
+            "weight_z_rate": weight_z_rate,
+
+            # -------------------------------------------------
+            # HEIGHT BY AGE WINDOW
+            # -------------------------------------------------
+
+            "height_z_0_6": height_0_6,
+
+            "height_z_6_12": height_6_12,
+
+            "height_z_12_18": height_12_18,
+
+            "height_z_18_24": height_18_24,
+
+            # -------------------------------------------------
+            # WEIGHT BY AGE WINDOW
+            # -------------------------------------------------
+
+            "weight_z_0_6": weight_0_6,
+
+            "weight_z_6_12": weight_6_12,
+
+            "weight_z_12_18": weight_12_18,
+
+            "weight_z_18_24": weight_18_24
+        })
+
+    return pd.DataFrame(
+        features
+    )
+
+
+
+================================================================================
+FILE: .\logistic.py
+================================================================================
+
+import pandas as pd
+import numpy as np
+
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    classification_report
+)
+
+LOGISTIC_FEATURES = [
+
+    "start_height_z",
+    "end_height_z",
+    "height_z_change",
+    "height_z_rate",
+
+    "start_weight_z",
+    "end_weight_z",
+    "weight_z_change",
+    "weight_z_rate"
+
+]
+
+
+# =============================================================
+# logistic regression training with cross fold validation
+# =============================================================
+
+def run_logistic_regression(
+    features_with_groups,
+    n_splits=5,
+    random_state=42
+):
+
+    print("\n" + "=" * 60)
+    print("LOGISTIC REGRESSION")
+    print("=" * 60)
+
+    print(
+        f"\nUsing {n_splits}-fold stratified cross-validation."
+    )
+
+    data = features_with_groups.copy()
+
+    # ---------------------------------------------------------
+    # required columns
+    # ---------------------------------------------------------
+
+    required_columns = (
+        LOGISTIC_FEATURES
+        + [
+            "anon_id",
+            "growth_group"
+        ]
+    )
+
+    missing_columns = [
+        column
+        for column in required_columns
+        if column not in data.columns
+    ]
+
+    if missing_columns:
+
+        raise ValueError(
+            "Missing required columns: "
+            + str(missing_columns)
+        )
+
+
+    model_data = data[
+        required_columns
+    ].copy()
+
+    # ---------------------------------------------------------
+    # remove row without labels
+    # ---------------------------------------------------------
+
+    model_data = model_data.dropna(
+        subset=["growth_group"]
+    ).copy()
+
+    # ---------------------------------------------------------
+    # features and labels
+    # ---------------------------------------------------------
+
+    X = model_data[
+        LOGISTIC_FEATURES
+    ].copy()
+
+    y = model_data[
+        "growth_group"
+    ].astype(int).copy()
+
+    child_ids = model_data[
+        "anon_id"
+    ].copy()
+
+    print(
+        f"\nChildren used: "
+        f"{len(model_data):,}"
+    )
+
+    print("\nClass distribution:")
+
+    class_distribution = (
+        y.value_counts()
+        .sort_index()
+    )
+
+    class_percent = (
+        y.value_counts(
+            normalize=True
+        )
+        .sort_index()
+        * 100
+    )
+
+    for group in class_distribution.index:
+
+        print(
+            f"Group {group}: "
+            f"{class_distribution[group]:,} "
+            f"({class_percent[group]:.2f}%)"
+        )
+
+    # ---------------------------------------------------------
+    # one child per row
+    # ---------------------------------------------------------
+
+    duplicate_children = (
+        child_ids.duplicated()
+        .sum()
+    )
+
+    if duplicate_children > 0:
+
+        raise ValueError(
+            "Duplicate children detected in "
+            "logistic regression dataset: "
+            f"{duplicate_children}"
+        )
+
+    cv = StratifiedKFold(
+        n_splits=n_splits,
+        shuffle=True,
+        random_state=random_state
+    )
+
+
+    fold_results = []
+
+    y_true_oof = np.empty(
+        len(y),
+        dtype=int
+    )
+
+    y_pred_oof = np.empty(
+        len(y),
+        dtype=int
+    )
+
+    # ---------------------------------------------------------
+    # loops for cross validation
+    # ---------------------------------------------------------
+
+    for fold, (
+        train_indices,
+        validation_indices
+    ) in enumerate(
+        cv.split(X, y),
+        start=1
+    ):
+
+        print("\n" + "-" * 60)
+        print(
+            f"FOLD {fold}/{n_splits}"
+        )
+        print("-" * 60)
+
+        # -----------------------------------------------------
+        # split data between test and training 
+        # -----------------------------------------------------
+
+        X_train = X.iloc[
+            train_indices
+        ].copy()
+
+        X_validation = X.iloc[
+            validation_indices
+        ].copy()
+
+        y_train = y.iloc[
+            train_indices
+        ].copy()
+
+        y_validation = y.iloc[
+            validation_indices
+        ].copy()
+
+        train_ids = child_ids.iloc[
+            train_indices
+        ]
+
+        validation_ids = child_ids.iloc[
+            validation_indices
+        ]
+
+        # -----------------------------------------------------
+        # check for overlap
+        # -----------------------------------------------------
+
+        overlap = set(train_ids).intersection(
+            set(validation_ids)
+        )
+
+        if overlap:
+
+            raise ValueError(
+                "Child leakage detected in fold "
+                f"{fold}: {len(overlap)} "
+                "children appear in both sets."
+            )
+
+        print(
+            f"Training children: "
+            f"{len(X_train):,}"
+        )
+
+        print(
+            f"Validation children: "
+            f"{len(X_validation):,}"
+        )
+
+        # imputatation
+
+        imputer = SimpleImputer(
+            strategy="median"
+        )
+
+        X_train_imputed = imputer.fit_transform(
+            X_train
+        )
+
+        X_validation_imputed = imputer.transform(
+            X_validation
+        )
+
+        # scaling
+        scaler = StandardScaler()
+
+        X_train_scaled = scaler.fit_transform(
+            X_train_imputed
+        )
+
+        X_validation_scaled = scaler.transform(
+            X_validation_imputed
+        )
+
+        # -----------------------------------------------------
+        # logistic regression model
+        # -----------------------------------------------------
+
+        model = LogisticRegression(
+            max_iter=2000,
+            random_state=random_state
+        )
+
+        model.fit(
+            X_train_scaled,
+            y_train
+        )
+
+        # -----------------------------------------------------
+        # predictions
+        # -----------------------------------------------------
+
+        y_pred = model.predict(
+            X_validation_scaled
+        )
+
+
+        y_true_oof[
+            validation_indices
+        ] = y_validation.to_numpy()
+
+        y_pred_oof[
+            validation_indices
+        ] = y_pred
+
+        accuracy = accuracy_score(
+            y_validation,
+            y_pred
+        )
+
+        precision = precision_score(
+            y_validation,
+            y_pred,
+            average="macro",
+            zero_division=0
+        )
+
+        recall = recall_score(
+            y_validation,
+            y_pred,
+            average="macro",
+            zero_division=0
+        )
+
+        macro_f1 = f1_score(
+            y_validation,
+            y_pred,
+            average="macro",
+            zero_division=0
+        )
+
+        fold_results.append(
+            {
+                "fold": fold,
+                "accuracy": accuracy,
+                "precision": precision,
+                "recall": recall,
+                "macro_f1": macro_f1
+            }
+        )
+
+        print(
+            f"Accuracy:  {accuracy:.4f}"
+        )
+
+        print(
+            f"Precision: {precision:.4f}"
+        )
+
+        print(
+            f"Recall:    {recall:.4f}"
+        )
+
+        print(
+            f"Macro-F1:  {macro_f1:.4f}"
+        )
+
+    # =========================================================
+    # cross-validation results
+    # =========================================================
+
+    results_df = pd.DataFrame(
+        fold_results
+    )
+
+    print("\n" + "=" * 60)
+    print("CROSS-VALIDATION RESULTS")
+    print("=" * 60)
+
+    print(
+        results_df.to_string(
+            index=False,
+            float_format=lambda x: f"{x:.4f}"
+        )
+    )
+
+    # ---------------------------------------------------------
+    # mean and SD
+    # ---------------------------------------------------------
+
+    print("\n=== MEAN and STANDARD DEVIATION ===")
+
+    for metric in [
+        "accuracy",
+        "precision",
+        "recall",
+        "macro_f1"
+    ]:
+
+        mean = results_df[
+            metric
+        ].mean()
+
+        std = results_df[
+            metric
+        ].std()
+
+        print(
+            f"{metric.capitalize():<10}: "
+            f"{mean:.4f} ± {std:.4f}"
+        )
+
+    # =========================================================
+    # out-of-fold  report
+    # =========================================================
+
+    print("\n" + "=" * 60)
+    print("OUT-OF-FOLD CLASSIFICATION REPORT")
+    print("=" * 60)
+
+    print(
+        classification_report(
+            y_true_oof,
+            y_pred_oof,
+            zero_division=0
+        )
+    )
+
+    # =========================================================
+    # out of fold confusion matrix 
+    # =========================================================
+
+    print("\n" + "=" * 60)
+    print("OUT-OF-FOLD CONFUSION MATRIX")
+    print("=" * 60)
+
+    cm = confusion_matrix(
+        y_true_oof,
+        y_pred_oof
+    )
+
+    cm_df = pd.DataFrame(
+        cm,
+        index=[
+            "Actual 0",
+            "Actual 1",
+            "Actual 2"
+        ],
+        columns=[
+            "Predicted 0",
+            "Predicted 1",
+            "Predicted 2"
+        ]
+    )
+
+    print(
+        cm_df
+    )
+
+    # =========================================================
+    # out of fold accuracy
+    # =========================================================
+
+    oof_accuracy = accuracy_score(
+        y_true_oof,
+        y_pred_oof
+    )
+
+    oof_precision = precision_score(
+        y_true_oof,
+        y_pred_oof,
+        average="macro",
+        zero_division=0
+    )
+
+    oof_recall = recall_score(
+        y_true_oof,
+        y_pred_oof,
+        average="macro",
+        zero_division=0
+    )
+
+    oof_macro_f1 = f1_score(
+        y_true_oof,
+        y_pred_oof,
+        average="macro",
+        zero_division=0
+    )
+
+    print("\n=== OVERALL OUT-OF-FOLD METRICS ===")
+
+    print(
+        f"Accuracy:  {oof_accuracy:.4f}"
+    )
+
+    print(
+        f"Precision: {oof_precision:.4f}"
+    )
+
+    print(
+        f"Recall:    {oof_recall:.4f}"
+    )
+
+    print(
+        f"Macro-F1:  {oof_macro_f1:.4f}"
+    )
+
+    return {
+        "fold_results": results_df,
+
+        "mean_accuracy":
+            results_df["accuracy"].mean(),
+
+        "std_accuracy":
+            results_df["accuracy"].std(),
+
+        "mean_precision":
+            results_df["precision"].mean(),
+
+        "std_precision":
+            results_df["precision"].std(),
+
+        "mean_recall":
+            results_df["recall"].mean(),
+
+        "std_recall":
+            results_df["recall"].std(),
+
+        "mean_macro_f1":
+            results_df["macro_f1"].mean(),
+
+        "std_macro_f1":
+            results_df["macro_f1"].std(),
+
+        "oof_accuracy":
+            oof_accuracy,
+
+        "oof_precision":
+            oof_precision,
+
+        "oof_recall":
+            oof_recall,
+
+        "oof_macro_f1":
+            oof_macro_f1,
+
+        "y_true_oof":
+            y_true_oof,
+
+        "y_pred_oof":
+            y_pred_oof,
+
+        "confusion_matrix":
+            cm,
+
+        "feature_names":
+            LOGISTIC_FEATURES
+    }
+
+
+================================================================================
+FILE: .\main.py
+================================================================================
+
+import argparse
+
+from dataprocessing import (
+    load_height_data,
+    load_weight_data,
+    merge_height_weight
+)
+
+from who_zscores import add_who_zscores
+
+from features import create_growth_features
+
+from validate_gmm import validate_gmm
+
+from eda import (
+    plot_height_by_age,
+    plot_weight_by_age,
+    plot_height_by_age_sex,
+    plot_weight_by_age_sex,
+    plot_individual_height_trajectories,
+    plot_individual_weight_trajectories
+)
+
+from logistic import run_logistic_regression
+
+
+# =============================================================
+# consts
+# =============================================================
+
+MAX_AGE_DAYS = 24 * 30.4375
+
+HEIGHT_BOYS = "database/reference/height_boys.xlsx"
+HEIGHT_GIRLS = "database/reference/height_girls.xlsx"
+
+WEIGHT_BOYS = "database/reference/weight_boys.xlsx"
+WEIGHT_GIRLS = "database/reference/weight_girls.xlsx"
+
+
+# =============================================================
+# cli arguments
+# =============================================================
+
+def parse_arguments():
+
+    parser = argparse.ArgumentParser(
+        description="Infant growth analysis pipeline"
+    )
+
+    parser.add_argument(
+        "--eda",
+        action="store_true",
+        help="Run exploratory data analysis plots"
+    )
+
+    parser.add_argument(
+        "--diagnostics",
+        action="store_true",
+        help="Run detailed data and growth diagnostics"
+    )
+
+    parser.add_argument(
+        "--logistic",
+        action="store_true",
+        help="Run logistic regression using provisional GMM labels"
+    )
+
+    return parser.parse_args()
+
+
+# =============================================================
+# loading and preparing data
+# =============================================================
+
+def load_growth_data():
+
+    height = load_height_data()
+
+    weight = load_weight_data()
+
+    growth = merge_height_weight(
+        height,
+        weight
+    )
+
+    # ---------------------------------------------------------
+    # project only cover birth to 2 year mark
+    # ---------------------------------------------------------
+
+    growth = growth[
+        growth["AgeBabyDays"] <= MAX_AGE_DAYS
+    ].copy()
+
+    # ---------------------------------------------------------
+    # add who z scores to growth
+    # ---------------------------------------------------------
+
+    growth = add_who_zscores(
+        growth,
+        HEIGHT_BOYS,
+        HEIGHT_GIRLS,
+        WEIGHT_BOYS,
+        WEIGHT_GIRLS
+    )
+
+    return height, weight, growth
+
+
+# =============================================================
+# data summary
+# =============================================================
+
+def print_basic_summary(
+    growth
+):
+
+    print("\n" + "=" * 60)
+    print("0–24 MONTH DATA")
+    print("=" * 60)
+
+    print(
+        f"Observations: {len(growth):,}"
+    )
+
+    print(
+        f"Children: "
+        f"{growth['anon_id'].nunique():,}"
+    )
+
+    print(
+        f"Maximum age: "
+        f"{growth['AgeBabyDays'].max() / 30.4375:.2f} months"
+    )
+
+    print("\n=== SEX DISTRIBUTION ===")
+
+    print(
+        growth["Sex"]
+        .value_counts(dropna=False)
+    )
+
+
+# =============================================================
+# exploratory data analysis
+# =============================================================
+
+def run_eda(growth):
+
+    print("\n" + "=" * 60)
+    print("GENERATING EDA")
+    print("=" * 60)
+
+    plot_height_by_age(
+        growth
+    )
+
+    plot_weight_by_age(
+        growth
+    )
+
+    plot_height_by_age_sex(
+        growth
+    )
+
+    plot_weight_by_age_sex(
+        growth
+    )
+
+    plot_individual_height_trajectories(
+        growth
+    )
+
+    plot_individual_weight_trajectories(
+        growth
+    )
+
+
+# =============================================================
+# growth features
+# =============================================================
+
+def create_features(growth):
+
+    print("\n" + "=" * 60)
+    print("GROWTH FEATURES")
+    print("=" * 60)
+
+    features = create_growth_features(
+        growth
+    )
+
+    print(
+        f"Children with valid trajectories: "
+        f"{len(features):,}"
+    )
+
+    print("\nFeature columns:")
+
+    print(
+        features.columns.tolist()
+    )
+
+    print("\nFeature missing values:")
+
+    print(
+        features.isna().sum()
+    )
+
+    return features
+
+
+# =============================================================
+# gmm provisional labels 
+# =============================================================
+
+def create_gmm_labels(features):
+
+    print("\n" + "=" * 60)
+    print("GMM PROVISIONAL LABELS")
+    print("=" * 60)
+
+    (
+        features_with_groups,
+        gmm,
+        gmm_scaler,
+        gmm_feature_columns
+    ) = validate_gmm(
+        features,
+        n_components=3
+    )
+
+    print("\nGrowth group counts:")
+
+    print(
+        features_with_groups[
+            "growth_group"
+        ]
+        .value_counts()
+        .sort_index()
+    )
+
+    print("\nSample provisional labels:")
+
+    print(
+        features_with_groups[
+            [
+                "anon_id",
+                "growth_group",
+                "cluster_confidence"
+            ]
+        ]
+        .head(20)
+        .to_string(index=False)
+    )
+
+    return (
+        features_with_groups,
+        gmm,
+        gmm_scaler,
+        gmm_feature_columns
+    )
+
+
+def run_diagnostics(
+    height,
+    weight,
+    growth,
+    features
+):
+
+    print("\n" + "=" * 60)
+    print("DIAGNOSTICS")
+    print("=" * 60)
+
+    # ---------------------------------------------------------
+    # quality of the data reporting
+    # ---------------------------------------------------------
+
+    print("\n=== DATA QUALITY ===")
+
+    print(
+        f"Height records: "
+        f"{len(height):,}"
+    )
+
+    print(
+        f"Weight records: "
+        f"{len(weight):,}"
+    )
+
+    print(
+        f"Merged records: "
+        f"{len(growth):,}"
+    )
+
+    print(
+        f"Children: "
+        f"{growth['anon_id'].nunique():,}"
+    )
+
+    print("\nMissing values:")
+
+    print(
+        growth.isna().sum()
+    )
+
+    # ---------------------------------------------------------
+    # summary of z score
+    # ---------------------------------------------------------
+
+    print("\n=== HEIGHT Z-SCORES ===")
+
+    print(
+        growth["height_z"]
+        .describe()
+    )
+
+    print("\n=== WEIGHT Z-SCORES ===")
+
+    print(
+        growth["weight_z"]
+        .describe()
+    )
+
+    # ---------------------------------------------------------
+    # extreme z score
+    # ---------------------------------------------------------
+
+    print("\n=== EXTREME HEIGHT Z-SCORES ===")
+
+    print("\nLowest:")
+
+    print(
+        growth[
+            [
+                "anon_id",
+                "Sex",
+                "AgeBabyDays",
+                "Jit_Heightcm",
+                "height_z"
+            ]
+        ]
+        .sort_values("height_z")
+        .head(10)
+        .to_string(index=False)
+    )
+
+    print("\nHighest:")
+
+    print(
+        growth[
+            [
+                "anon_id",
+                "Sex",
+                "AgeBabyDays",
+                "Jit_Heightcm",
+                "height_z"
+            ]
+        ]
+        .sort_values(
+            "height_z",
+            ascending=False
+        )
+        .head(10)
+        .to_string(index=False)
+    )
+
+    # ---------------------------------------------------------
+    # extreme z score
+    # ---------------------------------------------------------
+
+    print("\n=== EXTREME WEIGHT Z-SCORES ===")
+
+    print("\nLowest:")
+
+    print(
+        growth[
+            [
+                "anon_id",
+                "Sex",
+                "AgeBabyDays",
+                "jit_weightkg",
+                "weight_z"
+            ]
+        ]
+        .sort_values("weight_z")
+        .head(10)
+        .to_string(index=False)
+    )
+
+    print("\nHighest:")
+
+    print(
+        growth[
+            [
+                "anon_id",
+                "Sex",
+                "AgeBabyDays",
+                "jit_weightkg",
+                "weight_z"
+            ]
+        ]
+        .sort_values(
+            "weight_z",
+            ascending=False
+        )
+        .head(10)
+        .to_string(index=False)
+    )
+
+    # ---------------------------------------------------------
+    # sumamary of trajectory
+    # ---------------------------------------------------------
+
+    print("\n=== TRAJECTORY SUMMARY ===")
+
+    print(
+        f"Children with valid trajectories: "
+        f"{len(features):,}"
+    )
+
+    print("\nMeasurements per child:")
+
+    print(
+        features[
+            "num_measurements"
+        ]
+        .describe()
+    )
+
+    print("\nFollow-up duration:")
+
+    print(
+        features[
+            "duration_days"
+        ]
+        .describe()
+    )
+
+
+# =============================================================
+# logistic regression subroutine
+# =============================================================
+
+def run_logistic(
+    features_with_groups
+):
+
+    print("\n" + "=" * 60)
+    print("LOGISTIC REGRESSION")
+    print("=" * 60)
+
+    results = run_logistic_regression(
+        features_with_groups
+    )
+
+    return results
+
+def main():
+
+    args = parse_arguments()
+
+    (
+        height,
+        weight,
+        growth
+    ) = load_growth_data()
+
+    # ---------------------------------------------------------
+    # prints growth summary 
+    # ---------------------------------------------------------
+
+    print_basic_summary(
+        growth
+    )
+
+    # ---------------------------------------------------------
+    # if diagnostics argument is passed via cli
+    # ---------------------------------------------------------
+
+    if args.eda:
+
+        run_eda(
+            growth
+        )
+
+    # ---------------------------------------------------------
+    # growth features
+    # ---------------------------------------------------------
+
+    features = create_features(
+        growth
+    )
+
+    # ---------------------------------------------------------
+    # if diagnostics argument is passed via cli
+    # ---------------------------------------------------------
+
+    if args.diagnostics:
+
+        run_diagnostics(
+            height,
+            weight,
+            growth,
+            features
+        )
+
+    # ---------------------------------------------------------
+    # using the labels made by gmm as logistic regression target
+    # ---------------------------------------------------------
+
+    (
+        features_with_groups,
+        gmm,
+        gmm_scaler,
+        gmm_feature_columns
+    ) = create_gmm_labels(
+        features
+    )
+
+    # ---------------------------------------------------------
+    # if logistic regression cli argument is used
+    # ---------------------------------------------------------
+
+    if args.logistic:
+
+        run_logistic(
+            features_with_groups
+        )
+        
+# =============================================================
+# start point 
+# =============================================================
+
+if __name__ == "__main__":
+    main()
+
+
+================================================================================
+FILE: .\validate_gmm.py
+================================================================================
+
+import numpy as np
+import pandas as pd
+
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score, adjusted_rand_score
+
+
+def validate_gmm(features, n_components=3):
+
+    print("\n" + "=" * 60)
+    print("GMM GROUP VALIDATION")
+    print("=" * 60)
+
+    data = features.copy()
+
+    feature_columns = [
+        "start_height_z",
+        "end_height_z",
+        "height_z_change",
+        "height_z_rate",
+        "start_weight_z",
+        "end_weight_z",
+        "weight_z_change",
+        "weight_z_rate",
+    ]
+
+    X = data[feature_columns].copy()
+
+
+    valid = X.notna().all(axis=1)
+
+    data = data.loc[valid].copy()
+    X = X.loc[valid].copy()
+
+    print(f"\nChildren used for GMM validation: {len(data):,}")
+
+    scaler = StandardScaler()
+
+    X_scaled = scaler.fit_transform(X)
+
+    # ---------------------------------------------------------
+    # fit gmm
+    # ---------------------------------------------------------
+
+    gmm = GaussianMixture(
+        n_components=n_components,
+        covariance_type="full",
+        random_state=42,
+        n_init=10
+    )
+
+    labels = gmm.fit_predict(X_scaled)
+
+    data["growth_group"] = labels
+
+
+    print("\n=== GROUP DISTRIBUTION ===")
+
+    counts = (
+        data["growth_group"]
+        .value_counts()
+        .sort_index()
+    )
+
+    percentages = (
+        counts / len(data) * 100
+    ).round(2)
+
+    distribution = pd.DataFrame({
+        "count": counts,
+        "percent": percentages
+    })
+
+    print(distribution)
+
+    silhouette = silhouette_score(
+        X_scaled,
+        labels
+    )
+
+    print("\n=== SILHOUETTE SCORE ===")
+    print(f"Silhouette score: {silhouette:.4f}")
+
+    # ---------------------------------------------------------
+    # group means
+    # ---------------------------------------------------------
+
+    print("\n=== MEAN FEATURES BY GROUP ===")
+
+    group_means = (
+        data.groupby("growth_group")[feature_columns]
+        .mean()
+        .round(3)
+    )
+
+    print(group_means)
+
+    # ---------------------------------------------------------
+    # group median and means
+    # ---------------------------------------------------------
+
+    print("\n=== MEDIAN FEATURES BY GROUP ===")
+
+    group_medians = (
+        data.groupby("growth_group")[feature_columns]
+        .median()
+        .round(3)
+    )
+
+    print(group_medians)
+
+
+    standardized_df = pd.DataFrame(
+        X_scaled,
+        columns=feature_columns,
+        index=data.index
+    )
+
+    standardized_df["growth_group"] = labels
+
+    print("\n=== STANDARDIZED GROUP MEANS ===")
+
+    standardized_means = (
+        standardized_df
+        .groupby("growth_group")
+        .mean()
+        .round(3)
+    )
+
+    print(standardized_means)
+
+    # ---------------------------------------------------------
+    # gmm prob. 
+    # ---------------------------------------------------------
+
+    probabilities = gmm.predict_proba(X_scaled)
+
+    confidence = probabilities.max(axis=1)
+
+    data["cluster_confidence"] = confidence
+
+    print("\n=== GMM ASSIGNMENT CONFIDENCE ===")
+
+    print(
+        pd.Series(confidence).describe()
+    )
+
+    print(
+        f"\nMean assignment confidence: "
+        f"{confidence.mean():.3f}"
+    )
+
+    print(
+        f"Assignments >= 0.80: "
+        f"{(confidence >= 0.80).sum():,} "
+        f"({(confidence >= 0.80).mean() * 100:.1f}%)"
+    )
+
+    print(
+        f"Assignments >= 0.90: "
+        f"{(confidence >= 0.90).sum():,} "
+        f"({(confidence >= 0.90).mean() * 100:.1f}%)"
+    )
+
+    # ---------------------------------------------------------
+    # stability
+    # ---------------------------------------------------------
+
+    print("\n=== GMM STABILITY ===")
+
+    reference_labels = labels
+
+    seeds = [
+        1,
+        7,
+        21,
+        42,
+        100
+    ]
+
+    stability_results = []
+
+    for seed in seeds:
+
+        model = GaussianMixture(
+            n_components=n_components,
+            covariance_type="full",
+            random_state=seed,
+            n_init=10
+        )
+
+        new_labels = model.fit_predict(X_scaled)
+
+        ari = adjusted_rand_score(
+            reference_labels,
+            new_labels
+        )
+
+        stability_results.append({
+            "seed": seed,
+            "ARI_vs_reference": ari,
+            "converged": model.converged_,
+            "iterations": model.n_iter_
+        })
+
+    stability = pd.DataFrame(
+        stability_results
+    )
+
+    print(stability.to_string(index=False))
+
+    # ---------------------------------------------------------
+    # AIC BIC iterations
+    # ---------------------------------------------------------
+
+    print("\n=== MODEL INFORMATION ===")
+
+    print(f"Components: {n_components}")
+    print(f"Converged: {gmm.converged_}")
+    print(f"Iterations: {gmm.n_iter_}")
+    print(f"BIC: {gmm.bic(X_scaled):.2f}")
+    print(f"AIC: {gmm.aic(X_scaled):.2f}")
+
+    return (
+        data,
+        gmm,
+        scaler,
+        feature_columns
+    )
+
+
+================================================================================
+FILE: .\who_zscores.py
+================================================================================
+
+import pandas as pd
+import numpy as np
+
+
+def load_who_reference(path):
+
+    reference = pd.read_excel(path)
+
+    required = ["Month", "L", "M", "S"]
+
+    missing = [col for col in required if col not in reference.columns]
+
+    if missing:
+        raise ValueError(
+            f"Missing required WHO columns: {missing}"
+        )
+
+    return reference[required].copy()
+
+
+def calculate_lms_zscore(value, L, M, S):
+
+    if pd.isna(value) or pd.isna(L) or pd.isna(M) or pd.isna(S):
+        return np.nan
+
+    if value <= 0 or M <= 0 or S <= 0:
+        return np.nan
+
+    if L == 0:
+        return np.log(value / M) / S
+
+    return ((value / M) ** L - 1) / (L * S)
+
+
+def calculate_zscore(value, age_days, reference):
+
+
+    if pd.isna(value) or pd.isna(age_days):
+        return np.nan
+
+    age_months = age_days / 30.4375
+
+    min_month = reference["Month"].min()
+    max_month = reference["Month"].max()
+
+    if age_months < min_month or age_months > max_month:
+        return np.nan
+
+    lower_month = int(np.floor(age_months))
+    upper_month = int(np.ceil(age_months))
+
+
+    if lower_month == upper_month:
+
+        row = reference[
+            reference["Month"] == lower_month
+        ].iloc[0]
+
+        return calculate_lms_zscore(
+            value,
+            row["L"],
+            row["M"],
+            row["S"]
+        )
+
+    lower = reference[
+        reference["Month"] == lower_month
+    ].iloc[0]
+
+    upper = reference[
+        reference["Month"] == upper_month
+    ].iloc[0]
+
+    fraction = age_months - lower_month
+
+    L = lower["L"] + fraction * (
+        upper["L"] - lower["L"]
+    )
+
+    M = lower["M"] + fraction * (
+        upper["M"] - lower["M"]
+    )
+
+    S = lower["S"] + fraction * (
+        upper["S"] - lower["S"]
+    )
+
+    return calculate_lms_zscore(
+        value,
+        L,
+        M,
+        S
+    )
+    
+def add_who_zscores(
+    growth,
+    height_boys_path,
+    height_girls_path,
+    weight_boys_path,
+    weight_girls_path
+):
+
+    height_boys = load_who_reference(height_boys_path)
+    height_girls = load_who_reference(height_girls_path)
+
+    weight_boys = load_who_reference(weight_boys_path)
+    weight_girls = load_who_reference(weight_girls_path)
+
+    height_z = []
+    weight_z = []
+
+    for _, row in growth.iterrows():
+
+        sex = row["Sex"]
+
+        if sex == "Male":
+            height_ref = height_boys
+            weight_ref = weight_boys
+        else:
+            height_ref = height_girls
+            weight_ref = weight_girls
+
+        hz = calculate_zscore(
+            row["Jit_Heightcm"],
+            row["AgeBabyDays"],
+            height_ref
+        )
+
+        wz = calculate_zscore(
+            row["jit_weightkg"],
+            row["AgeBabyDays"],
+            weight_ref
+        )
+
+        height_z.append(hz)
+        weight_z.append(wz)
+
+    growth = growth.copy()
+
+    growth["height_z"] = height_z
+    growth["weight_z"] = weight_z
+
+    return growth
+
